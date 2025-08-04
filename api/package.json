@@ -1,7 +1,16 @@
 {
   "name": "heading-analyzer-api",
   "version": "1.0.0",
+  "description": "Backend API for heading structure analysis",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "vercel build"
+  },
   "dependencies": {
     "cheerio": "^1.0.0-rc.12"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
