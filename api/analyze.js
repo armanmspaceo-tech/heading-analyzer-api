@@ -33,7 +33,8 @@ export default async function handler(req, res) {
         'DNT': '1',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1'
-      }
+      },
+      timeout: 10000 // 10 second timeout
     });
 
     if (!response.ok) {
@@ -54,10 +55,10 @@ export default async function handler(req, res) {
       const level = parseInt(element.tagName.charAt(1));
       const text = $el.text().trim();
       
-      if (text) {
+      if (text) { // Only include non-empty headings
         headings.push({
           level,
-          text: text.substring(0, 200)
+          text: text.substring(0, 200) // Limit text length
         });
       }
     });
@@ -93,6 +94,7 @@ function analyzeHeadingIssues(headings) {
     return issues;
   }
   
+  // Check for H1 issues
   const h1Count = headings.filter(h => h.level === 1).length;
   if (h1Count === 0) {
     issues.push("No H1 tag found - every page should have exactly one H1");
@@ -100,6 +102,7 @@ function analyzeHeadingIssues(headings) {
     issues.push(`Multiple H1 tags found (${h1Count}) - should have only one H1 per page`);
   }
   
+  // Check for skipped heading levels
   for (let i = 1; i < headings.length; i++) {
     const current = headings[i];
     const previous = headings[i - 1];
@@ -109,6 +112,7 @@ function analyzeHeadingIssues(headings) {
     }
   }
   
+  // Check heading order
   if (headings.length > 0 && headings[0].level !== 1) {
     issues.push("Page should start with an H1 heading");
   }
@@ -132,12 +136,14 @@ function generateSuggestions(headings) {
     const heading = headings[i];
     
     if (i === 0) {
+      // First heading should be H1
       suggestions.push({
         level: 1,
         text: heading.text
       });
       currentMaxLevel = 1;
     } else {
+      // Don't skip levels - limit to currentMaxLevel + 1
       const suggestedLevel = Math.min(heading.level, currentMaxLevel + 1);
       
       suggestions.push({
