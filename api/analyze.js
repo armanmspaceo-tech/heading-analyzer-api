@@ -1,3 +1,4 @@
+// api/analyze.js - Complete working version
 import * as cheerio from 'cheerio';
 
 export default async function handler(req, res) {
@@ -23,18 +24,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Fetch the webpage with proper headers
+    console.log('Analyzing URL:', url);
+
+    // Fetch the webpage
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      timeout: 10000 // 10 second timeout
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
     });
 
     if (!response.ok) {
@@ -44,6 +44,7 @@ export default async function handler(req, res) {
     }
 
     const html = await response.text();
+    console.log('HTML fetched, length:', html.length);
     
     // Parse HTML with Cheerio
     const $ = cheerio.load(html);
@@ -55,26 +56,31 @@ export default async function handler(req, res) {
       const level = parseInt(element.tagName.charAt(1));
       const text = $el.text().trim();
       
-      if (text) { // Only include non-empty headings
+      if (text && text.length > 0) {
         headings.push({
           level,
-          text: text.substring(0, 200) // Limit text length
+          text: text.substring(0, 150) // Limit text length
         });
       }
     });
 
+    console.log('Headings extracted:', headings.length);
+
     // Analyze issues
     const issues = analyzeHeadingIssues(headings);
     
-    // Generate suggestions
-    const suggestions = generateSuggestions(headings);
+    // Generate improved suggestions
+    const suggestions = generateImprovedSuggestions(headings);
+
+    console.log('Analysis complete');
 
     res.status(200).json({
       success: true,
       headings,
       issues,
       suggestions,
-      url
+      url,
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
@@ -97,9 +103,9 @@ function analyzeHeadingIssues(headings) {
   // Check for H1 issues
   const h1Count = headings.filter(h => h.level === 1).length;
   if (h1Count === 0) {
-    issues.push("No H1 tag found - every page should have exactly one H1");
+    issues.push("❌ No H1 tag found - every page should have exactly one H1");
   } else if (h1Count > 1) {
-    issues.push(`Multiple H1 tags found (${h1Count}) - should have only one H1 per page`);
+    issues.push(`❌ Multiple H1 tags found (${h1Count}) - should have only one H1 per page`);
   }
   
   // Check for skipped heading levels
@@ -108,19 +114,27 @@ function analyzeHeadingIssues(headings) {
     const previous = headings[i - 1];
     
     if (current.level > previous.level + 1) {
-      issues.push(`Skipped heading level: H${previous.level} followed by H${current.level} (should use H${previous.level + 1})`);
+      issues.push(`⚠️ Skipped heading level: H${previous.level} followed by H${current.level} (should use H${previous.level + 1})`);
     }
   }
   
   // Check heading order
   if (headings.length > 0 && headings[0].level !== 1) {
-    issues.push("Page should start with an H1 heading");
+    issues.push("⚠️ Page should start with an H1 heading");
+  }
+  
+  // Check for content organization issues
+  const h2Count = headings.filter(h => h.level === 2).length;
+  const h3Count = headings.filter(h => h.level === 3).length;
+  
+  if (h3Count > 0 && h2Count < 2) {
+    issues.push("💡 Consider adding more H2 sections to better organize your H3 subsections");
   }
   
   return issues;
 }
 
-function generateSuggestions(headings) {
+function generateImprovedSuggestions(headings) {
   if (headings.length === 0) {
     return [
       {level: 1, text: "Add a main page title (H1)"},
@@ -130,32 +144,91 @@ function generateSuggestions(headings) {
   }
   
   const suggestions = [];
-  let currentMaxLevel = 1;
   
-  for (let i = 0; i < headings.length; i++) {
+  // Always start with H1
+  suggestions.push({
+    level: 1,
+    text: headings[0].text
+  });
+  
+  // Process remaining headings with smart grouping
+  for (let i = 1; i < headings.length; i++) {
     const heading = headings[i];
+    const previousSuggestion = suggestions[suggestions.length - 1];
     
-    if (i === 0) {
-      // First heading should be H1
-      suggestions.push({
-        level: 1,
-        text: heading.text
-      });
-      currentMaxLevel = 1;
-    } else {
-      // Don't skip levels - limit to currentMaxLevel + 1
-      const suggestedLevel = Math.min(heading.level, currentMaxLevel + 1);
+    // Smart content categorization
+    const isArticleTitle = isArticleOrGuide(heading.text);
+    const isSectionHeader = isSectionTitle(heading.text);
+    const isFooterContent = isFooterOrCallToAction(heading.text);
+    
+    let suggestedLevel = 2; // Default to H2
+    
+    if (isSectionHeader) {
+      // Main section headers should be H2
+      suggestedLevel = 2;
+    } else if (isArticleTitle && previousSuggestion && previousSuggestion.level <= 2) {
+      // Articles under a section should be H3
+      suggestedLevel = 3;
       
-      suggestions.push({
-        level: suggestedLevel,
-        text: heading.text
-      });
-      
-      if (suggestedLevel > currentMaxLevel) {
-        currentMaxLevel = suggestedLevel;
+      // But if there's no "articles" section yet, create one
+      if (!hasRecentArticlesSection(suggestions)) {
+        suggestions.push({
+          level: 2,
+          text: "Recent Articles"
+        });
       }
+    } else if (isFooterContent) {
+      suggestedLevel = 2;
+    } else {
+      // Default organization
+      suggestedLevel = Math.min(heading.level, previousSuggestion.level + 1);
     }
+    
+    suggestions.push({
+      level: suggestedLevel,
+      text: heading.text
+    });
   }
   
   return suggestions;
+}
+
+function isArticleOrGuide(text) {
+  const lowerText = text.toLowerCase();
+  return lowerText.includes('guide') || 
+         lowerText.includes('how to') ||
+         lowerText.includes('tutorial') ||
+         lowerText.includes('tips') ||
+         /\d{4}/.test(text) || // Contains year
+         lowerText.includes('detection') ||
+         lowerText.includes('secure') ||
+         lowerText.includes('automate');
+}
+
+function isSectionTitle(text) {
+  const lowerText = text.toLowerCase();
+  return lowerText.includes('blog posts') ||
+         lowerText.includes('articles') ||
+         lowerText.includes('news') ||
+         lowerText.includes('updates') ||
+         lowerText.includes('more');
+}
+
+function isFooterOrCallToAction(text) {
+  const lowerText = text.toLowerCase();
+  return lowerText.includes('subscribe') ||
+         lowerText.includes('contact') ||
+         lowerText.includes('making every') ||
+         lowerText.includes('day-in-the-life') ||
+         lowerText.includes('get started') ||
+         lowerText.includes('learn more');
+}
+
+function hasRecentArticlesSection(suggestions) {
+  return suggestions.some(s => 
+    s.level === 2 && 
+    (s.text.toLowerCase().includes('article') || 
+     s.text.toLowerCase().includes('blog') ||
+     s.text.toLowerCase().includes('post'))
+  );
 }
